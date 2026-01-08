@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>THREADLINE Enhanced</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { margin:0; overflow:hidden; background:black; }
+#ui, #msg {
+  position:absolute;
+  color:white;
+  font-family:monospace;
+}
+#ui { top:10px; left:10px; }
+#msg { bottom:30px; width:100%; text-align:center; font-size:24px; }
+#btn {
+  position:absolute;
+  bottom:20px;
+  right:20px;
+  padding:15px;
+  background:#222;
+  color:white;
+}
+</style>
+</head>
+<body>
+
+<div id="ui">WASD / Touch | E / Tap = Interact</div>
+<div id="msg"></div>
+<button id="btn">INTERACT</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js"></script>
+
+<script>
+let scene, camera, renderer;
+let keys={}, clock=new THREE.Clock();
+let enemy, patrolIndex=0, chasing=false;
+let hasKey=false, powerOn=false, gameOver=false;
+let checkpoint=localStorage.getItem("checkpoint")||"start";
+
+const patrolPoints=[
+  new THREE.Vector3(6,1,0),
+  new THREE.Vector3(-6,1,0)
+];
+
+init();
+animate();
+
+function init(){
+  scene=new THREE.Scene();
+  scene.fog=new THREE.Fog(0x000000,5,25);
+
+  camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,100);
+  camera.position.set(0,1.6,5);
+
+  renderer=new THREE.WebGLRenderer();
+  renderer.setSize(innerWidth,innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x404040));
+  let light=new THREE.PointLight(0xff5555,1,20);
+  light.position.set(0,5,0);
+  scene.add(light);
+
+  // Floor
+  let floor=new THREE.Mesh(
+    new THREE.PlaneGeometry(50,50),
+    new THREE.MeshStandardMaterial({color:0x222222})
+  );
+  floor.rotation.x=-Math.PI/2;
+  scene.add(floor);
+
+  // Rooms
+  wall(0,2,-10,20,4,1);
+  wall(10,2,0,1,4,20);
+  wall(-10,2,0,1,4,20);
+
+  // Door
+  door=new THREE.Mesh(
+    new THREE.BoxGeometry(2,3,.4),
+    new THREE.MeshStandardMaterial({color:0x4444ff})
+  );
+  door.position.set(0,1.5,-9);
+  door.name="door";
+  scene.add(door);
+
+  // Key
+  keyObj=new THREE.Mesh(
+    new THREE.BoxGeometry(.5,.5,.5),
+    new THREE.MeshStandardMaterial({color:0xffff00})
+  );
+  keyObj.position.set(-5,1,0);
+  keyObj.name="key";
+  scene.add(keyObj);
+
+  // Switch
+  switchObj=new THREE.Mesh(
+    new THREE.BoxGeometry(.5,.5,.2),
+    new THREE.MeshStandardMaterial({color:0x00ff00})
+  );
+  switchObj.position.set(5,1,0);
+  switchObj.name="switch";
+  scene.add(switchObj);
+
+  // Enemy
+  enemy=new THREE.Mesh(
+    new THREE.BoxGeometry(1,2,1),
+    new THREE.MeshStandardMaterial({color:0xff0000})
+  );
+  enemy.position.set(0,1,-5);
+  scene.add(enemy);
+
+  document.addEventListener("keydown",e=>keys[e.code]=true);
+  document.addEventListener("keyup",e=>keys[e.code]=false);
+  document.getElementById("btn").onclick=interact;
+
+  document.body.onclick=()=>document.body.requestPointerLock();
+  document.addEventListener("mousemove",e=>{
+    if(document.pointerLockElement===document.body){
+      camera.rotation.y-=e.movementX*0.002;
+      camera.rotation.x-=e.movementY*0.002;
+      camera.rotation.x=Math.max(-1.5,Math.min(1.5,camera.rotation.x));
+    }
+  });
+}
+
+function wall(x,y,z,w,h,d){
+  let m=new THREE.Mesh(
+    new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshStandardMaterial({color:0x555555})
+  );
+  m.position.set(x,y,z);
+  scene.add(m);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  if(gameOver)return;
+  movePlayer();
+  enemyAI();
+  renderer.render(scene,camera);
+}
+
+function movePlayer(){
+  let dir=new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.y=0; dir.normalize();
+  if(keys["KeyW"])camera.position.addScaledVector(dir,.1);
+  if(keys["KeyS"])camera.position.addScaledVector(dir,-.1);
+}
+
+function enemyAI(){
+  let dist=enemy.position.distanceTo(camera.position);
+  if(dist<5){ chasing=true; }
+  if(chasing){
+    let d=new THREE.Vector3().subVectors(camera.position,enemy.position).normalize();
+    enemy.position.addScaledVector(d,.04);
+    if(dist<1){ end("CAUGHT"); }
+    if(dist>8)chasing=false;
+  }else{
+    let p=patrolPoints[patrolIndex];
+    let d=new THREE.Vector3().subVectors(p,enemy.position);
+    if(d.length()<.5)patrolIndex=(patrolIndex+1)%patrolPoints.length;
+    d.normalize();
+    enemy.position.addScaledVector(d,.02);
+  }
+}
+
+function interact(){
+  let ray=new THREE.Raycaster(camera.position,camera.getWorldDirection(new THREE.Vector3()));
+  let hits=ray.intersectObjects(scene.children);
+  if(hits.length>0){
+    let o=hits[0].object.name;
+    if(o==="key"){ hasKey=true; scene.remove(keyObj); msg("KEY ACQUIRED"); }
+    if(o==="switch"){ powerOn=true; msg("POWER ON"); }
+    if(o==="door" && hasKey && powerOn){ end("ESCAPED"); }
+  }
+}
+
+function msg(t){ document.getElementById("msg").innerText=t; setTimeout(()=>msg(""),2000); }
+function end(t){ msg(t); gameOver=true; localStorage.setItem("checkpoint","done"); }
+</script>
+
+</body>
+</html>
